@@ -7,8 +7,8 @@ class UserManager(BaseUserManager):
         'email field is required': _('The email field is required.'),
     }
     create_superuser_errors = {
-        'is_staff field is required': _('The is_staff field have to be set to True for a superuser.'),
-        'is_superuser field is required': _('The is_superuser field have to be set to True for a superuser.'),
+        'is_staff field is required to be True': _('The is_staff field have to be set to True for a superuser.'),
+        'is_superuser field is required to be True': _('The is_superuser field have to be set to True for a superuser.'),
     }
 
     def create_user(self, email: str, password: str, **extra_fields):
@@ -26,7 +26,7 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault('is_active', True)
 
         if extra_fields.get('is_staff') is not True:
-            raise ValueError(self.create_superuser_errors['is_staff field is required'])
+            raise ValueError(self.create_superuser_errors['is_staff field is required to be True'])
         if extra_fields.get('is_superuser') is not True:
-            raise ValueError(self.create_superuser_errors['is_superuser field is required'])
+            raise ValueError(self.create_superuser_errors['is_superuser field is required to be True'])
         return self.create_user(email, password, **extra_fields)
