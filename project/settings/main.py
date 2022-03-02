@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     'rest_framework',
+    'rest_framework.authtoken',
 
     'users',
 ]
@@ -105,6 +106,21 @@ AUTH_PASSWORD_VALIDATORS = [
 AUTH_USER_MODEL = 'users.User'
 
 AUTHENTICATION_BACKENDS = ['users.backends.EmailBackend']
+
+API_AUTHENTICATION_TOKEN_TYPE = 'bearer'
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'users.authentication.CustomTokenAuthentication',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+    ],
+    'TEST_REQUEST_DEFAULT_FORMAT': 'json',
+}
 
 
 # Internationalization

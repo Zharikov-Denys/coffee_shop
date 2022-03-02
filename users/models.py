@@ -9,10 +9,8 @@ class User(AbstractUser):
     email = models.EmailField(unique=True, verbose_name=_('Email'))
     username = models.CharField(
         max_length=150,
-        unique=False,
-        null=True,
         blank=True,
-        help_text=_('Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only.'),
+        help_text=_('150 characters or fewer. Letters, digits and @/./+/-/_ only.'),
         verbose_name=_('Username'),
     )
     is_email_verified = models.BooleanField(default=False, verbose_name=_('Is email verified'))
