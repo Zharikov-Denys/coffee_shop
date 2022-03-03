@@ -29,7 +29,7 @@ class TestUserManager(TestCase):
 
         self.assertEqual(user.email, user_from_db.email)
         self.assertEqual(user.password, user_from_db.password)
-        self.assertIsNone(user_from_db.username)
+        self.assertEqual('', user_from_db.username)
         self.assertFalse(user_from_db.is_email_verified)
         self.assertTrue(user_from_db.is_active)
         self.assertFalse(user_from_db.is_staff)
@@ -63,7 +63,7 @@ class TestUserManager(TestCase):
 
         self.assertEqual(user.email, user_from_db.email)
         self.assertEqual(user.password, user_from_db.password)
-        self.assertIsNone(user_from_db.username)
+        self.assertEqual('', user_from_db.username)
         self.assertFalse(user_from_db.is_email_verified)
         self.assertTrue(user_from_db.is_active)
         self.assertTrue(user_from_db.is_staff)
