@@ -50,3 +50,41 @@ class SignupUserSerializer(serializers.ModelSerializer):
 
         return user
 
+
+class LoginSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(max_length=255, required=True)
+    password = serializers.CharField(max_length=128, required=True)
+
+    USER_WITH_PROVIDED_EMAIL_DOES_NOT_EXIST_ERROR_MESSAGE = _('The user with provided email does not exist.')
+    INVALID_PASSWORD_ERROR_MESSAGE = _('Incorrect password.')
+
+    class Meta:
+        model = User
+        fields = ['email', 'password']
+
+    def to_representation(self, instance: User) -> dict:
+        token, created = Token.objects.get_or_create(user=instance)
+        return {
+            'token': token.key,
+            'token_type': settings.API_AUTHENTICATION_TOKEN_TYPE,
+        }
+
+    def validate_email(self, email: str) -> str:
+        try:
+            self.user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError(self.USER_WITH_PROVIDED_EMAIL_DOES_NOT_EXIST_ERROR_MESSAGE)
+        return email
+
+    def validate(self, validated_data: dict) -> dict:
+        password = validated_data['password']
+
+        if not self.user.check_password(password):
+            raise serializers.ValidationError({'password': self.INVALID_PASSWORD_ERROR_MESSAGE}, code='invalid')
+
+        return validated_data
+
+    def create(self, validated_data: dict) -> User:
+        self.user.last_login = timezone.now()
+        self.user.save(update_fields=['last_login'])
+        return self.user
