@@ -146,6 +146,9 @@ STATICFILES_DIRS = [os.path.join(PROJECT_ROOT_DIR, 'static_dev')]
 MEDIA_URL = 'media/'
 MEDIA_ROOT = os.path.join(PROJECT_ROOT_DIR, 'media')
 
+BASE_URL = 'http://localhost:8000' # without slash at the end
+DEFAULT_FROM_EMAIL = 'test@email.com'
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field
 

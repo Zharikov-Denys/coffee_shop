@@ -6,6 +6,9 @@ from django.conf import settings
 from rest_framework import serializers
 from rest_framework.authtoken.models import Token
 
+from users.models import ConfirmationToken
+from users.constants import ConfirmationTokenTypeEnum
+
 
 User = get_user_model()
 
@@ -88,3 +91,33 @@ class LoginSerializer(serializers.ModelSerializer):
         self.user.last_login = timezone.now()
         self.user.save(update_fields=['last_login'])
         return self.user
+
+
+class PasswordResetSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(max_length=255, required=True)
+
+    USER_WITH_PROVIDED_EMAIL_DOES_NOT_EXIST_ERROR_MESSAGE = _('The user with provided email address does not exist.')
+
+    class Meta:
+        model = User
+        fields = ['email']
+
+    def to_representation(self, instance: User) -> dict:
+        return {
+            'email': instance.email,
+        }
+
+    def validated_email(self, email: str) -> str:
+        if not User.objects.filter(email=email).exists():
+            raise serializers.ValidationError(self.USER_WITH_PROVIDED_EMAIL_DOES_NOT_EXIST_ERROR_MESSAGE)
+        return email
+
+    def create(self, validated_data: dict) -> User:
+        user = User.objects.get(email=validated_data['email'])
+        confirmation_token, created = ConfirmationToken.objects.get_or_create(
+            user=user,
+            is_used=False,
+            type=ConfirmationTokenTypeEnum.PASSWORD_RESET.value,
+        )
+        confirmation_token.send_email()
+        return user

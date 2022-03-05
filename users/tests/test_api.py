@@ -3,13 +3,16 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.urls import reverse
+from django.core import mail
 
 from rest_framework.test import APITestCase
 from rest_framework.authtoken.models import Token
 from rest_framework import status
 
 from users.factory import UserFactory
-from users.api.serializers import SignupUserSerializer, LoginSerializer
+from users.api.serializers import SignupUserSerializer, LoginSerializer, PasswordResetSerializer
+from users.models import ConfirmationToken
+from users.constants import ConfirmationTokenTypeEnum, PASSWORD_RESET_CONFIRMATION_URL
 
 from freezegun import freeze_time
 
@@ -239,3 +242,129 @@ class TestLoginView(APITestCase):
         self.assertEqual(self.active_user.is_superuser, user.is_superuser)
         self.assertTrue(user.check_password(self.valid_password))
         self.assertEqual(timezone.now(), user.last_login)
+
+
+class TestPasswordResetView(APITestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.user = UserFactory.create()
+        cls.nonexistent_email = 'nonexistent@email.com'
+        cls.url = reverse('password_reset')
+
+    def make_valid_request(self):
+        request_data = {
+            'email': self.user.email,
+        }
+
+        response = self.client.post(self.url, request_data)
+
+        return response
+
+    def test_required_data(self):
+        response = self.client.post(self.url, {})
+
+        self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'email': [_('This field is required.')],
+            },
+            response.data,
+        )
+
+    def test_response_after_valid_request(self):
+        response = self.make_valid_request()
+
+        self.assertEqual(status.HTTP_201_CREATED, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'email': self.user.email,
+            },
+            response.data,
+        )
+
+    @freeze_time('2022-01-01 12:00:00')
+    def test_confirmation_token_after_valid_request(self):
+        response = self.make_valid_request()
+
+        self.assertEqual(1, ConfirmationToken.objects.count())
+
+        confirmation_token = ConfirmationToken.objects.first()
+
+        self.assertEqual(self.user, confirmation_token.user)
+        self.assertEqual(ConfirmationTokenTypeEnum.PASSWORD_RESET.value, confirmation_token.type)
+        self.assertFalse(confirmation_token.is_used)
+        self.assertEqual(timezone.now(), confirmation_token.created)
+        self.assertIsNone(confirmation_token.usage_date)
+
+    def test_sent_email_after_valid_request(self):
+        response = self.make_valid_request()
+
+        self.assertEqual(1, len(mail.outbox))
+        self.assertEqual(1, ConfirmationToken.objects.count())
+
+        email = mail.outbox[0]
+        confirmation_token = ConfirmationToken.objects.first()
+        confirmation_url = PASSWORD_RESET_CONFIRMATION_URL.format(token=str(confirmation_token.token))
+
+        self.assertEqual(ConfirmationToken.PASSWORD_RESET_EMAIL_SUBJECT, email.subject)
+        self.assertEqual(settings.DEFAULT_FROM_EMAIL, email.from_email)
+        self.assertEqual([confirmation_token.user.email], email.to)
+        self.assertIn(confirmation_url, email.body)
+        self.assertIn(confirmation_url, str(email.alternatives[0]))
+
+    def test_response_after_valid_request_if_confirmation_token_has_been_already_created(self):
+        ConfirmationToken.objects.create(
+            user=self.user,
+            type=ConfirmationTokenTypeEnum.PASSWORD_RESET.value,
+        )
+        response = self.make_valid_request()
+
+        self.assertEqual(status.HTTP_201_CREATED, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'email': self.user.email,
+            },
+            response.data,
+        )
+
+    @freeze_time('2022-01-01 12:00:00')
+    def test_confirmation_token_after_valid_request_if_confirmation_token_has_been_already_created(self):
+        ConfirmationToken.objects.create(
+            user=self.user,
+            type=ConfirmationTokenTypeEnum.PASSWORD_RESET.value,
+        )
+        response = self.make_valid_request()
+
+        self.assertEqual(1, ConfirmationToken.objects.count())
+
+        confirmation_token = ConfirmationToken.objects.first()
+
+        self.assertEqual(self.user, confirmation_token.user)
+        self.assertEqual(ConfirmationTokenTypeEnum.PASSWORD_RESET.value, confirmation_token.type)
+        self.assertFalse(confirmation_token.is_used)
+        self.assertEqual(timezone.now(), confirmation_token.created)
+        self.assertIsNone(confirmation_token.usage_date)
+
+    def test_sent_email_after_valid_request_if_confirmation_token_has_been_already_created(self):
+        ConfirmationToken.objects.create(
+            user=self.user,
+            type=ConfirmationTokenTypeEnum.PASSWORD_RESET.value,
+        )
+        response = self.make_valid_request()
+
+        self.assertEqual(1, len(mail.outbox))
+        self.assertEqual(1, ConfirmationToken.objects.count())
+
+        email = mail.outbox[0]
+        confirmation_token = ConfirmationToken.objects.first()
+        confirmation_url = PASSWORD_RESET_CONFIRMATION_URL.format(token=str(confirmation_token.token))
+
+        self.assertEqual(ConfirmationToken.PASSWORD_RESET_EMAIL_SUBJECT, email.subject)
+        self.assertEqual(settings.DEFAULT_FROM_EMAIL, email.from_email)
+        self.assertEqual([confirmation_token.user.email], email.to)
+        self.assertIn(confirmation_url, email.body)
+        self.assertIn(confirmation_url, str(email.alternatives[0]))
+
