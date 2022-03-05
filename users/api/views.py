@@ -4,6 +4,7 @@ from users.api.serializers import (
     SignupUserSerializer,
     LoginSerializer,
     PasswordResetSerializer,
+    PasswordResetConfirmationSerializer,
 )
 
 
@@ -17,3 +18,7 @@ class LoginView(CreateAPIView):
 
 class PasswordResetView(CreateAPIView):
     serializer_class = PasswordResetSerializer
+
+
+class PasswordResetConfirmationView(CreateAPIView):
+    serializer_class = PasswordResetConfirmationSerializer

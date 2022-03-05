@@ -10,11 +10,17 @@ from rest_framework.authtoken.models import Token
 from rest_framework import status
 
 from users.factory import UserFactory
-from users.api.serializers import SignupUserSerializer, LoginSerializer, PasswordResetSerializer
+from users.api.serializers import (
+    SignupUserSerializer,
+    LoginSerializer,
+    PasswordResetSerializer,
+    PasswordResetConfirmationSerializer,
+)
 from users.models import ConfirmationToken
 from users.constants import ConfirmationTokenTypeEnum, PASSWORD_RESET_CONFIRMATION_URL
 
 from freezegun import freeze_time
+import uuid
 
 
 User = get_user_model()
@@ -272,6 +278,22 @@ class TestPasswordResetView(APITestCase):
             response.data,
         )
 
+    def test_request_with_nonexistent_email(self):
+        request_data = {
+            'email': self.nonexistent_email,
+        }
+
+        response = self.client.post(self.url, request_data)
+
+        self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'email': [PasswordResetSerializer.USER_WITH_PROVIDED_EMAIL_DOES_NOT_EXIST_ERROR_MESSAGE],
+            },
+            response.data,
+        )
+
     def test_response_after_valid_request(self):
         response = self.make_valid_request()
 
@@ -368,3 +390,100 @@ class TestPasswordResetView(APITestCase):
         self.assertIn(confirmation_url, email.body)
         self.assertIn(confirmation_url, str(email.alternatives[0]))
 
+
+class TestPasswordResetConfirmationView(APITestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.url = reverse('password_reset_confirmation')
+        cls.valid_password = 'test_password_123*#@'
+        cls.short_password = '1'
+        cls.invalid_token = str(uuid.uuid4())
+
+    def setUp(self) -> None:
+        self.user = UserFactory.create()
+        self.confirmation_token = ConfirmationToken.objects.create(
+            user=self.user,
+            type=ConfirmationTokenTypeEnum.PASSWORD_RESET.value,
+        )
+
+    def make_valid_request(self):
+        request_data = {
+            'token': str(self.confirmation_token.token),
+            'password': self.valid_password,
+        }
+
+        response = self.client.post(self.url, request_data)
+
+        return response
+
+    def test_required_data(self):
+        response = self.client.post(self.url, {})
+
+        self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'password': [_('This field is required.')],
+                'token': [_('This field is required.')],
+            },
+            response.data,
+        )
+
+    def test_too_short_password(self):
+        request_data = {
+            'password': self.short_password,
+        }
+
+        response = self.client.post(self.url, request_data)
+
+        self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertIn('password', response.data)
+        self.assertEqual([PasswordResetConfirmationSerializer.PASSWORD_IS_TOO_SHORT_ERROR_MESSAGE], response.data['password'])
+
+    def test_invalid_confirmation_token(self):
+        request_data = {
+            'token': self.invalid_token,
+        }
+
+        response = self.client.post(self.url, request_data)
+
+        self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertIn('token', response.data)
+        self.assertEqual([PasswordResetConfirmationSerializer.INVALID_CONFIRMATION_TOKEN_ERROR_MESSAGE], response.data['token'])
+
+    def test_response_after_valid_request(self):
+        response = self.make_valid_request()
+
+        self.assertEqual(status.HTTP_201_CREATED, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'is_used': True,
+            },
+            response.data,
+        )
+
+    @freeze_time('2022-01-01 12:00:00')
+    def test_confirmation_token_after_valid_request(self):
+        response = self.make_valid_request()
+
+        self.assertEqual(1, ConfirmationToken.objects.count())
+
+        confirmation_token = ConfirmationToken.objects.first()
+
+        self.assertEqual(self.user, confirmation_token.user)
+        self.assertEqual(ConfirmationTokenTypeEnum.PASSWORD_RESET.value, confirmation_token.type)
+        self.assertEqual(self.confirmation_token.token, confirmation_token.token)
+        self.assertTrue(confirmation_token.is_used)
+        self.assertEqual(timezone.now(), confirmation_token.usage_date)
+
+    def test_user_after_valid_request(self):
+        response = self.make_valid_request()
+
+        self.assertEqual(1, User.objects.count())
+
+        user = User.objects.first()
+
+        self.assertTrue(user.check_password(self.valid_password))

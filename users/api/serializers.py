@@ -9,6 +9,8 @@ from rest_framework.authtoken.models import Token
 from users.models import ConfirmationToken
 from users.constants import ConfirmationTokenTypeEnum
 
+import uuid
+
 
 User = get_user_model()
 
@@ -107,17 +109,54 @@ class PasswordResetSerializer(serializers.ModelSerializer):
             'email': instance.email,
         }
 
-    def validated_email(self, email: str) -> str:
-        if not User.objects.filter(email=email).exists():
+    def validate_email(self, email: str) -> str:
+        try:
+            self.user = User.objects.get(email=email)
+        except User.DoesNotExist:
             raise serializers.ValidationError(self.USER_WITH_PROVIDED_EMAIL_DOES_NOT_EXIST_ERROR_MESSAGE)
         return email
 
     def create(self, validated_data: dict) -> User:
-        user = User.objects.get(email=validated_data['email'])
         confirmation_token, created = ConfirmationToken.objects.get_or_create(
-            user=user,
+            user=self.user,
             is_used=False,
             type=ConfirmationTokenTypeEnum.PASSWORD_RESET.value,
         )
         confirmation_token.send_email()
-        return user
+        return self.user
+
+
+class PasswordResetConfirmationSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(max_length=128, required=True)
+    token = serializers.UUIDField(required=True)
+
+    INVALID_CONFIRMATION_TOKEN_ERROR_MESSAGE = _('Confirmation token is not valid.')
+    MIN_PASSWORD_LENGTH = 8
+    PASSWORD_IS_TOO_SHORT_ERROR_MESSAGE = _(f'Password has to be at least {MIN_PASSWORD_LENGTH} symbols length.')
+
+    class Meta:
+        model = ConfirmationToken
+        fields = ['token', 'password']
+
+    def to_representation(self, instance: ConfirmationToken) -> dict:
+        return {
+            'is_used': instance.is_used,
+        }
+
+    def validate_token(self, token: uuid) -> uuid:
+        if not ConfirmationToken.objects.filter(token=token, is_used=False, type=ConfirmationTokenTypeEnum.PASSWORD_RESET.value).exists():
+            raise serializers.ValidationError(self.INVALID_CONFIRMATION_TOKEN_ERROR_MESSAGE)
+        return token
+
+    def validate_password(self, password: str) -> str:
+        if len(password) < self.MIN_PASSWORD_LENGTH:
+            raise serializers.ValidationError(self.PASSWORD_IS_TOO_SHORT_ERROR_MESSAGE)
+        return password
+
+    def create(self, validated_data: dict) -> ConfirmationToken:
+        confirmation_token = ConfirmationToken.objects.get(token=validated_data['token'])
+        confirmation_token.use_token()
+        user = confirmation_token.user
+        user.set_password(validated_data['password'])
+        user.save(update_fields=['password'])
+        return confirmation_token

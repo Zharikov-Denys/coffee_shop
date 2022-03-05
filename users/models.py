@@ -39,7 +39,7 @@ class User(AbstractUser):
 class ConfirmationToken(models.Model):
     user = models.ForeignKey(User, related_name='confirmation_tokens', on_delete=models.CASCADE, verbose_name=_('User'))
     type = models.PositiveSmallIntegerField(choices=CONFIRMATION_TOKEN_TYPE_CHOICES, verbose_name=_('Type'))
-    token = models.UUIDField(default=uuid.uuid4, editable=False, verbose_name=_('Token'))
+    token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True, verbose_name=_('Token'))
     is_used = models.BooleanField(default=False, verbose_name=_('Is used'))
     created = models.DateTimeField(default=timezone.now, verbose_name=_('Created'))
     usage_date = models.DateTimeField(null=True, blank=True, verbose_name=_('Usage date'))
