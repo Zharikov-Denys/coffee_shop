@@ -1,5 +1,7 @@
 from django.contrib.auth import get_user_model
 
+from users.fuzzy import FuzzyPhoneNumber
+
 import factory
 
 
@@ -11,6 +13,7 @@ class UserFactory(factory.django.DjangoModelFactory):
         model = User
 
     email = factory.Sequence(lambda number: f'email_{number}@email.com')
+    phone_number = FuzzyPhoneNumber()
     is_active = True
     is_staff = False
     is_superuser = False

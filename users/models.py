@@ -11,6 +11,7 @@ from users.managers import UserManager
 from users.constants import CONFIRMATION_TOKEN_TYPE_CHOICES, ConfirmationTokenTypeEnum, PASSWORD_RESET_CONFIRMATION_URL
 
 import uuid
+from phonenumber_field.modelfields import PhoneNumberField
 
 
 class User(AbstractUser):
@@ -21,6 +22,7 @@ class User(AbstractUser):
         help_text=_('150 characters or fewer. Letters, digits and @/./+/-/_ only.'),
         verbose_name=_('Username'),
     )
+    phone_number = PhoneNumberField(blank=True, verbose_name=_('Phone number'))
     is_email_verified = models.BooleanField(default=False, verbose_name=_('Is email verified'))
 
     objects = UserManager()
