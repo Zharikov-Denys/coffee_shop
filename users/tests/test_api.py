@@ -18,6 +18,7 @@ from users.api.serializers import (
 )
 from users.models import ConfirmationToken
 from users.constants import ConfirmationTokenTypeEnum, PASSWORD_RESET_CONFIRMATION_URL
+from users.api.validators import PasswordValidator
 
 from freezegun import freeze_time
 import uuid
@@ -104,7 +105,7 @@ class TestSignupView(APITestCase):
         self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code)
         self.assertEqual('application/json', response.headers['Content-Type'])
         self.assertIn('password', response.data)
-        self.assertEqual([SignupUserSerializer.PASSWORD_IS_TOO_SHORT_ERROR_MESSAGE], response.data['password'])
+        self.assertEqual([PasswordValidator.PASSWORD_IS_TOO_SHORT_ERROR_MESSAGE], response.data['password'])
 
     def test_valid_request_without_username__response(self):
         response, user, token = self.make_valid_request()
@@ -439,7 +440,7 @@ class TestPasswordResetConfirmationView(APITestCase):
         self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code)
         self.assertEqual('application/json', response.headers['Content-Type'])
         self.assertIn('password', response.data)
-        self.assertEqual([PasswordResetConfirmationSerializer.PASSWORD_IS_TOO_SHORT_ERROR_MESSAGE], response.data['password'])
+        self.assertEqual([PasswordValidator.PASSWORD_IS_TOO_SHORT_ERROR_MESSAGE], response.data['password'])
 
     def test_invalid_confirmation_token(self):
         request_data = {
@@ -487,3 +488,349 @@ class TestPasswordResetConfirmationView(APITestCase):
         user = User.objects.first()
 
         self.assertTrue(user.check_password(self.valid_password))
+
+
+class TestAccountRetrieve(APITestCase):
+    @staticmethod
+    def create_user(**kwargs) -> User:
+        properties = {
+            'username': 'test_username',
+        }
+        properties.update(kwargs)
+        return UserFactory.create(**properties)
+
+    @staticmethod
+    def get_url(user_id: int) -> str:
+        return reverse('account', kwargs={'user_id': user_id})
+
+    def test_authorization_is_required(self):
+        user = self.create_user()
+        response = self.client.get(self.get_url(user.id))
+
+        self.assertEqual(status.HTTP_401_UNAUTHORIZED, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'detail': _('Authentication credentials were not provided.'),
+            },
+            response.data
+        )
+
+    def test_user_with_provided_id_does_not_exist(self):
+        user = self.create_user()
+        self.client.force_authenticate(user=user)
+        response = self.client.get(self.get_url(user.id + 1))
+
+        self.assertEqual(status.HTTP_404_NOT_FOUND, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'detail': _('Not found.'),
+            },
+            response.data
+        )
+
+    def test_successful_response__user_has_phone_number(self):
+        user = self.create_user()
+        self.client.force_authenticate(user=user)
+        response = self.client.get(self.get_url(user.id))
+
+        self.assertEqual(status.HTTP_200_OK, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'username': user.username,
+                'email': user.email,
+                'phone_number': user.phone_number.as_e164,
+            },
+            response.data
+        )
+
+    def test_successful_response__user_does_not_has_phone_number(self):
+        user = self.create_user(phone_number='')
+        self.client.force_authenticate(user=user)
+        response = self.client.get(self.get_url(user.id))
+
+        self.assertEqual(status.HTTP_200_OK, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'username': user.username,
+                'email': user.email,
+                'phone_number': '',
+            },
+            response.data
+        )
+
+
+class TestAccountUpdate(APITestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.valid_username = 'valid_test_username'
+        cls.valid_email = 'test@email.com'
+        cls.valid_phone_number = '+380674233333'
+        cls.valid_password = 'test_password_123*%$'
+        cls.invalid_email = 'testemail.com'
+        cls.invalid_phone_number = 'sdf'
+        cls.short_password = '1'
+
+    @staticmethod
+    def get_url(user_id: int) -> str:
+        return reverse('account', kwargs={'user_id': user_id})
+
+    def setUp(self) -> None:
+        self.user = UserFactory.create(username='testuser')
+
+    def make_request(self, user: User, **request_data):
+        self.client.force_authenticate(user=user)
+        return self.client.put(self.get_url(user.id), request_data)
+
+    def test_authorization_is_required(self):
+        response = self.client.put(self.get_url(self.user.id))
+
+        self.assertEqual(status.HTTP_401_UNAUTHORIZED, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'detail': _('Authentication credentials were not provided.'),
+            },
+            response.data
+        )
+
+    def test_user_with_provided_id_does_not_exist(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(self.get_url(self.user.id + 10))
+
+        self.assertEqual(status.HTTP_404_NOT_FOUND, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'detail': _('Not found.'),
+            },
+            response.data
+        )
+
+    def test_required_data(self):
+        response = self.make_request(self.user)
+
+        self.assertEqual(status.HTTP_200_OK, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'username': self.user.username,
+                'email': self.user.email,
+                'phone_number': self.user.phone_number.as_e164,
+            },
+            response.data
+        )
+
+    def test_invalid_email(self):
+        response = self.make_request(self.user, email=self.invalid_email)
+
+        self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'email': [_('Enter a valid email address.')],
+            },
+            response.data
+        )
+
+    def test_invalid_phone_number(self):
+        response = self.make_request(self.user, phone_number=self.invalid_phone_number)
+
+        self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'phone_number': [_('Enter a valid phone number.')],
+            },
+            response.data,
+        )
+
+    def test_short_password(self):
+        response = self.make_request(self.user, password=self.short_password)
+
+        self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'password': [PasswordValidator.PASSWORD_IS_TOO_SHORT_ERROR_MESSAGE],
+            },
+            response.data
+        )
+
+    def test_response_after_valid_request__clean_username(self):
+        response = self.make_request(self.user, username='')
+
+        self.assertEqual(status.HTTP_200_OK, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'username': '',
+                'email': self.user.email,
+                'phone_number': self.user.phone_number.as_e164,
+            },
+            response.data,
+        )
+
+    def test_user_after_valid_request__clean_username(self):
+        response = self.make_request(self.user, username='')
+
+        updated_user = User.objects.get(id=self.user.id)
+
+        self.assertEqual('', updated_user.username)
+        self.assertEqual(self.user.email, updated_user.email)
+        self.assertEqual(self.user.phone_number.as_e164, updated_user.phone_number.as_e164)
+
+    def test_response_after_valid_request__clean_phone_number(self):
+        response = self.make_request(self.user, phone_number='')
+
+        self.assertEqual(status.HTTP_200_OK, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'username': self.user.username,
+                'email': self.user.email,
+                'phone_number': '',
+            },
+            response.data,
+        )
+
+    def test_user_after_valid_request__clean_phone_number(self):
+        response = self.make_request(self.user, phone_number='')
+
+        updated_user = User.objects.get(id=self.user.id)
+
+        self.assertEqual(self.user.username, updated_user.username)
+        self.assertEqual(self.user.email, updated_user.email)
+        self.assertEqual('', updated_user.phone_number)
+
+    def test_response_after_valid_request__clean_username_and_phone_number(self):
+        response = self.make_request(self.user, username='', phone_number='')
+
+        self.assertEqual(status.HTTP_200_OK, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'username': '',
+                'email': self.user.email,
+                'phone_number': '',
+            },
+            response.data,
+        )
+
+    def test_user_after_valid_request__clean_username_and_phone_number(self):
+        response = self.make_request(self.user, username='', phone_number='')
+
+        updated_user = User.objects.get(id=self.user.id)
+
+        self.assertEqual('', updated_user.username)
+        self.assertEqual(self.user.email, updated_user.email)
+        self.assertEqual('', updated_user.phone_number)
+
+    def test_response_after_valid_request__update_username(self):
+        response = self.make_request(self.user, username=self.valid_username)
+
+        self.assertEqual(status.HTTP_200_OK, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'username': self.valid_username,
+                'email': self.user.email,
+                'phone_number': self.user.phone_number.as_e164,
+            },
+            response.data,
+        )
+
+    def test_user_after_valid_request__update_username(self):
+        response = self.make_request(self.user, username=self.valid_username)
+
+        updated_user = User.objects.get(id=self.user.id)
+
+        self.assertEqual(self.valid_username, updated_user.username)
+        self.assertEqual(self.user.email, updated_user.email)
+        self.assertEqual(self.user.phone_number.as_e164, updated_user.phone_number.as_e164)
+
+    def test_response_after_valid_request__update_email(self):
+        response = self.make_request(self.user, email=self.valid_email)
+
+        self.assertEqual(status.HTTP_200_OK, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'username': self.user.username,
+                'email': self.valid_email,
+                'phone_number': self.user.phone_number.as_e164,
+            },
+            response.data,
+        )
+
+    def test_user_after_valid_request__update_email(self):
+        response = self.make_request(self.user, email=self.valid_email)
+
+        updated_user = User.objects.get(id=self.user.id)
+
+        self.assertEqual(self.user.username, updated_user.username)
+        self.assertEqual(self.valid_email, updated_user.email)
+        self.assertEqual(self.user.phone_number.as_e164, updated_user.phone_number.as_e164)
+
+    def test_response_after_valid_request__update_phone_number(self):
+        response = self.make_request(self.user, password=self.valid_password)
+
+        self.assertEqual(status.HTTP_200_OK, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'username': self.user.username,
+                'email': self.user.email,
+                'phone_number': self.user.phone_number.as_e164,
+            },
+            response.data,
+        )
+
+    def test_user_after_valid_request__update_phone_number(self):
+        response = self.make_request(self.user, password=self.valid_password)
+
+        updated_user = User.objects.get(id=self.user.id)
+
+        self.assertEqual(self.user.username, updated_user.username)
+        self.assertEqual(self.user.email, updated_user.email)
+        self.assertEqual(self.user.phone_number.as_e164, updated_user.phone_number.as_e164)
+        self.assertTrue(updated_user.check_password(self.valid_password))
+
+    def test_response_after_valid_request__update_all_fields(self):
+        response = self.make_request(
+            self.user,
+            username=self.valid_username,
+            email=self.valid_email,
+            phone_number=self.valid_phone_number,
+            password=self.valid_password
+        )
+
+        self.assertEqual(status.HTTP_200_OK, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'username': self.valid_username,
+                'email': self.valid_email,
+                'phone_number': self.valid_phone_number,
+            },
+            response.data,
+        )
+
+    def test_user_after_valid_request__update_all_fields(self):
+        response = self.make_request(
+            self.user,
+            username=self.valid_username,
+            email=self.valid_email,
+            phone_number=self.valid_phone_number,
+            password=self.valid_password
+        )
+
+        updated_user = User.objects.get(id=self.user.id)
+
+        self.assertEqual(self.valid_username, updated_user.username)
+        self.assertEqual(self.valid_email, updated_user.email)
+        self.assertEqual(self.valid_phone_number, updated_user.phone_number.as_e164)
+        self.assertTrue(updated_user.check_password(self.valid_password))

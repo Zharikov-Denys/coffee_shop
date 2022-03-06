@@ -8,8 +8,10 @@ from rest_framework.authtoken.models import Token
 
 from users.models import ConfirmationToken
 from users.constants import ConfirmationTokenTypeEnum
+from users.api.fields import PasswordField
 
 import uuid
+from phonenumber_field.serializerfields import PhoneNumberField
 
 
 User = get_user_model()
@@ -17,10 +19,9 @@ User = get_user_model()
 
 class SignupUserSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(max_length=255)
+    password = PasswordField(required=True)
 
-    MIN_PASSWORD_LENGTH = 8
     EMAIL_IS_REQUIRED_ERROR_MESSAGE = _('User with provided email already exist.')
-    PASSWORD_IS_TOO_SHORT_ERROR_MESSAGE = _(f'Password has to be at least {MIN_PASSWORD_LENGTH} symbols length.')
 
     class Meta:
         model = User
@@ -31,11 +32,6 @@ class SignupUserSerializer(serializers.ModelSerializer):
         if User.objects.filter(email=email).exists():
             raise serializers.ValidationError(self.EMAIL_IS_REQUIRED_ERROR_MESSAGE)
         return email
-
-    def validate_password(self, password: str) -> str:
-        if len(password) < self.MIN_PASSWORD_LENGTH:
-            raise serializers.ValidationError(self.PASSWORD_IS_TOO_SHORT_ERROR_MESSAGE)
-        return password
 
     def to_representation(self, instance: User) -> dict:
         return {
@@ -127,12 +123,10 @@ class PasswordResetSerializer(serializers.ModelSerializer):
 
 
 class PasswordResetConfirmationSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(max_length=128, required=True)
+    password = PasswordField(required=True)
     token = serializers.UUIDField(required=True)
 
     INVALID_CONFIRMATION_TOKEN_ERROR_MESSAGE = _('Confirmation token is not valid.')
-    MIN_PASSWORD_LENGTH = 8
-    PASSWORD_IS_TOO_SHORT_ERROR_MESSAGE = _(f'Password has to be at least {MIN_PASSWORD_LENGTH} symbols length.')
 
     class Meta:
         model = ConfirmationToken
@@ -148,11 +142,6 @@ class PasswordResetConfirmationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(self.INVALID_CONFIRMATION_TOKEN_ERROR_MESSAGE)
         return token
 
-    def validate_password(self, password: str) -> str:
-        if len(password) < self.MIN_PASSWORD_LENGTH:
-            raise serializers.ValidationError(self.PASSWORD_IS_TOO_SHORT_ERROR_MESSAGE)
-        return password
-
     def create(self, validated_data: dict) -> ConfirmationToken:
         confirmation_token = ConfirmationToken.objects.get(token=validated_data['token'])
         confirmation_token.use_token()
@@ -160,3 +149,50 @@ class PasswordResetConfirmationSerializer(serializers.ModelSerializer):
         user.set_password(validated_data['password'])
         user.save(update_fields=['password'])
         return confirmation_token
+
+
+class AccountSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(max_length=255, required=False)
+    phone_number = PhoneNumberField(required=False, allow_blank=True)
+    password = PasswordField(required=False)
+
+    class Meta:
+        model = User
+        fields = ['username', 'email', 'phone_number', 'password']
+        extra_kwargs = {
+            'email': {
+                'required': False,
+            },
+        }
+
+    def to_representation(self, instance: User) -> dict:
+        return {
+            'username': instance.username,
+            'email': instance.email,
+            'phone_number': instance.phone_number.as_e164 if instance.phone_number else '',
+        }
+
+    def update(self, instance: User, validated_data: dict) -> User:
+        username = validated_data.get('username')
+        email = validated_data.get('email')
+        phone_number = validated_data.get('phone_number')
+        password = validated_data.get('password')
+
+        update_fields = []
+
+        if username is not None:
+            instance.username = username
+            update_fields.append('username')
+        if email is not None:
+            instance.email = email
+            update_fields.append('email')
+        if phone_number is not None:
+            instance.phone_number = phone_number
+            update_fields.append('phone_number')
+        if password is not None:
+            instance.set_password(password)
+            update_fields.append('password')
+
+        instance.save(update_fields=update_fields)
+
+        return instance

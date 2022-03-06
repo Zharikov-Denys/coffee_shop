@@ -1,11 +1,19 @@
+from django.contrib.auth import get_user_model
+
 from rest_framework.generics import CreateAPIView
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
 
 from users.api.serializers import (
     SignupUserSerializer,
     LoginSerializer,
     PasswordResetSerializer,
     PasswordResetConfirmationSerializer,
+    AccountSerializer,
 )
+
+
+User = get_user_model()
 
 
 class SignupUserView(CreateAPIView):
@@ -22,3 +30,11 @@ class PasswordResetView(CreateAPIView):
 
 class PasswordResetConfirmationView(CreateAPIView):
     serializer_class = PasswordResetConfirmationSerializer
+
+
+class AccountViewSet(ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = AccountSerializer
+    queryset = User.objects.filter(is_active=True)
+    lookup_url_kwarg = 'user_id'
+    lookup_field = 'id'

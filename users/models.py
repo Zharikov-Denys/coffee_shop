@@ -88,4 +88,3 @@ class ConfirmationToken(models.Model):
                 recipient_list=[self.user.email],
                 html_message=html_email,
             )
-
