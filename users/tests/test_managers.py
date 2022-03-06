@@ -37,6 +37,22 @@ class TestUserManager(TestCase):
 
         self.assertTrue(user.check_password(self.password))
 
+    def test_create_user_without_password(self):
+        user = self.manager.create_user(email=self.email)
+
+        self.assertEqual(1, User.objects.count())
+        self.assertEqual(1, User.objects.filter(id=user.id).count())
+
+        user_from_db = User.objects.filter(id=user.id).first()
+
+        self.assertEqual(user.email, user_from_db.email)
+        self.assertEqual(user.password, user_from_db.password)
+        self.assertEqual('', user_from_db.username)
+        self.assertFalse(user_from_db.is_email_verified)
+        self.assertTrue(user_from_db.is_active)
+        self.assertFalse(user_from_db.is_staff)
+        self.assertFalse(user_from_db.is_superuser)
+
     def test_create_superuser__is_staff_field_is_False(self):
         with self.assertRaises(ValueError, msg=self.manager.create_superuser_errors['is_staff field is required to be True']):
             self.manager.create_superuser(

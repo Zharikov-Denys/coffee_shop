@@ -10,7 +10,10 @@ from users.api.serializers import (
     PasswordResetSerializer,
     PasswordResetConfirmationSerializer,
     AccountSerializer,
+    SocialAuthenticationSerializer,
 )
+
+from social_django.utils import load_strategy, load_backend
 
 
 User = get_user_model()
@@ -38,3 +41,17 @@ class AccountViewSet(ModelViewSet):
     queryset = User.objects.filter(is_active=True)
     lookup_url_kwarg = 'user_id'
     lookup_field = 'id'
+
+
+class SocialAuthenticationView(CreateAPIView):
+    serializer_class = SocialAuthenticationSerializer
+
+    BACKEND = None
+
+    def update_request_by_social_backend(self, request) -> None:
+        request.social_strategy = load_strategy(request)
+        request.backend = load_backend(request.social_strategy, self.BACKEND, redirect_uri=None)
+
+    def create(self, request, *args, **kwargs):
+        self.update_request_by_social_backend(request)
+        return super().create(request, *args, **kwargs)

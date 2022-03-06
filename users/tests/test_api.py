@@ -15,12 +15,17 @@ from users.api.serializers import (
     LoginSerializer,
     PasswordResetSerializer,
     PasswordResetConfirmationSerializer,
+    SocialAuthenticationSerializer,
 )
 from users.models import ConfirmationToken
 from users.constants import ConfirmationTokenTypeEnum, PASSWORD_RESET_CONFIRMATION_URL
 from users.api.validators import PasswordValidator
 
+from social_django.models import UserSocialAuth
+
+from typing import Tuple
 from freezegun import freeze_time
+from unittest.mock import patch
 import uuid
 
 
@@ -834,3 +839,193 @@ class TestAccountUpdate(APITestCase):
         self.assertEqual(self.valid_email, updated_user.email)
         self.assertEqual(self.valid_phone_number, updated_user.phone_number.as_e164)
         self.assertTrue(updated_user.check_password(self.valid_password))
+
+
+class TestSocialAuthenticationViewBase:
+    get_json_mock = None
+    do_auth_mock = None
+    provider_name = None
+    url_name = None
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.access_token = 'access_token'
+        cls.name = 'Full_name'
+        cls.email = 'test@email.com'
+        cls.first_name = 'first_name'
+        cls.last_name = 'last_name'
+        cls.url = reverse(cls.url_name)
+
+    def get_social_provider_response_data(self) -> dict:
+        return {
+            'name': self.name,
+            'email': self.email,
+            'first_name': self.first_name,
+            'last_name': self.last_name,
+        }
+
+    def make_valid_request(self):
+        with patch(self.get_json_mock) as mock:
+            mock.return_value = self.get_social_provider_response_data()
+            response = self.client.post(self.url, {'access_token': self.access_token})
+            return response
+
+    def create_user_and_token(self) -> Tuple[User, Token]:
+        user = UserFactory.create(email=self.email)
+        token = Token.objects.create(user=user)
+        return user, token
+
+    def test_required_data(self):
+        response = self.client.post(self.url, {})
+
+        self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(
+            {
+                'access_token': [_('This field is required.')],
+            },
+            response.data
+        )
+
+    def test_invalid_token(self):
+        with patch(self.do_auth_mock) as mock:
+            mock.return_value = None
+            response = self.client.post(self.url, {'access_token': self.access_token})
+
+            self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code)
+            self.assertEqual('application/json', response.headers['Content-Type'])
+            self.assertEqual(
+                {
+                    'access_token': [SocialAuthenticationSerializer.INVALID_TOKEN_ERROR_MESSAGE],
+                },
+                response.data
+            )
+
+    def test_response_and_token_creation_after_valid_request(self):
+        response = self.make_valid_request()
+
+        self.assertEqual(1, Token.objects.count())
+
+        token = Token.objects.first()
+
+        self.assertEqual(status.HTTP_201_CREATED, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(self.email, token.user.email)
+        self.assertEqual(
+            {
+                'token': token.key,
+                'token_type': settings.API_AUTHENTICATION_TOKEN_TYPE,
+            },
+            response.data
+        )
+
+    @freeze_time('2022-01-01 12:00:00')
+    def test_user_creation_after_valid_request(self):
+        response = self.make_valid_request()
+
+        self.assertEqual(1, User.objects.count())
+
+        user = User.objects.first()
+
+        self.assertEqual(self.name, user.username)
+        self.assertEqual(self.email, user.email)
+        self.assertEqual(self.first_name, user.first_name)
+        self.assertEqual(self.last_name, user.last_name)
+        self.assertEqual('', user.phone_number)
+        self.assertEqual(timezone.now(), user.date_joined)
+        self.assertTrue(user.is_active)
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
+
+    @freeze_time('2022-01-01 12:00:00')
+    def test_user_social_auth_after_valid_request(self):
+        response = self.make_valid_request()
+
+        self.assertEqual(1, UserSocialAuth.objects.count())
+
+        user_social_auth = UserSocialAuth.objects.first()
+
+        self.assertEqual(self.email, user_social_auth.user.email)
+        self.assertEqual(self.provider_name, user_social_auth.provider)
+        self.assertEqual(timezone.now(), user_social_auth.created)
+        self.assertEqual(timezone.now(), user_social_auth.modified)
+
+    def test_response_after_valid_request_if_user_and_token_have_been_already_created(self):
+        user, token = self.create_user_and_token()
+        response = self.make_valid_request()
+
+        self.assertEqual(status.HTTP_201_CREATED, response.status_code)
+        self.assertEqual('application/json', response.headers['Content-Type'])
+        self.assertEqual(user, token.user)
+        self.assertEqual(
+            {
+                'token': token.key,
+                'token_type': settings.API_AUTHENTICATION_TOKEN_TYPE,
+            },
+            response.data
+        )
+
+    @freeze_time('2022-01-01 12:00:00')
+    def test_user_creation_after_valid_request_if_user_and_token_have_been_already_created(self):
+        user, token = self.create_user_and_token()
+        response = self.make_valid_request()
+
+        self.assertEqual(1, User.objects.count())
+
+        user_from_db = User.objects.first()
+
+        self.assertEqual(user.username, user.username)
+        self.assertEqual(user.email, user.email)
+        self.assertEqual(user.first_name, user.first_name)
+        self.assertEqual(user.last_name, user.last_name)
+        self.assertEqual(user.phone_number.as_e164, user.phone_number.as_e164)
+        self.assertEqual(timezone.now(), user.date_joined)
+        self.assertTrue(user.is_active)
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
+
+    @freeze_time('2022-01-01 12:00:00')
+    def test_user_social_auth_after_valid_request_if_user_and_token_have_been_already_created(self):
+        user, token = self.create_user_and_token()
+        response = self.make_valid_request()
+
+        self.assertEqual(1, UserSocialAuth.objects.count())
+
+        user_social_auth = UserSocialAuth.objects.first()
+
+        self.assertEqual(user, user_social_auth.user)
+        self.assertEqual(self.provider_name, user_social_auth.provider)
+        self.assertEqual(timezone.now(), user_social_auth.created)
+        self.assertEqual(timezone.now(), user_social_auth.modified)
+
+
+class TestFacebookSocialAuthentication(TestSocialAuthenticationViewBase, APITestCase):
+    get_json_mock = 'social_core.backends.facebook.FacebookOAuth2.get_json'
+    do_auth_mock = 'social_core.backends.facebook.FacebookOAuth2.do_auth'
+    provider_name = 'facebook'
+    url_name = 'facebook_authentication'
+
+
+class TestGoogleSocialAuthentication(TestSocialAuthenticationViewBase, APITestCase):
+    get_json_mock = 'social_core.backends.google.GoogleOAuth2.get_json'
+    do_auth_mock = 'social_core.backends.google.GoogleOAuth2.do_auth'
+    provider_name = 'google-oauth2'
+    url_name = 'google_authentication'
+
+    @freeze_time('2022-01-01 12:00:00')
+    def test_user_creation_after_valid_request(self):
+        response = self.make_valid_request()
+
+        self.assertEqual(1, User.objects.count())
+
+        user = User.objects.first()
+
+        self.assertEqual(self.email.split('@')[0], user.username)
+        self.assertEqual(self.email, user.email)
+        self.assertEqual(self.name, user.first_name)
+        self.assertEqual('', user.last_name)
+        self.assertEqual('', user.phone_number)
+        self.assertEqual(timezone.now(), user.date_joined)
+        self.assertTrue(user.is_active)
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)

@@ -196,3 +196,36 @@ class AccountSerializer(serializers.ModelSerializer):
         instance.save(update_fields=update_fields)
 
         return instance
+
+
+class SocialAuthenticationSerializer(serializers.ModelSerializer):
+    access_token = serializers.CharField()
+
+    INVALID_TOKEN_ERROR_MESSAGE = _('Provided token is not valid.')
+
+    class Meta:
+        model = Token
+        fields = ['access_token']
+
+    def to_representation(self, instance: Token) -> dict:
+        return {
+            'token': instance.key,
+            'token_type': settings.API_AUTHENTICATION_TOKEN_TYPE,
+        }
+
+    def validate(self, attrs: dict) -> dict:
+        request = self.context['request']
+        access_token = attrs['access_token']
+
+        user = request.backend.do_auth(access_token=access_token)
+
+        if not user:
+            raise serializers.ValidationError({'access_token': self.INVALID_TOKEN_ERROR_MESSAGE})
+
+        attrs['user'] = user
+        return attrs
+
+    def create(self, validated_data: dict) -> Token:
+        user = validated_data['user']
+        token, created = Token.objects.get_or_create(user=user)
+        return token

@@ -1,6 +1,8 @@
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import BaseUserManager
 
+from typing import Optional
+
 
 class UserManager(BaseUserManager):
     create_user_errors = {
@@ -11,12 +13,13 @@ class UserManager(BaseUserManager):
         'is_superuser field is required to be True': _('The is_superuser field have to be set to True for a superuser.'),
     }
 
-    def create_user(self, email: str, password: str, **extra_fields):
+    def create_user(self, email: str, password: Optional[str] = None, **extra_fields):
         if not email:
             raise ValueError(self.create_user_errors['email field is required'])
         email = self.normalize_email(email)
         user = self.model(email=email, **extra_fields)
-        user.set_password(password)
+        if password:
+            user.set_password(password)
         user.save()
         return user
 
